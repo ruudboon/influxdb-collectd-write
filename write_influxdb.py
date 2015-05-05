@@ -10,7 +10,7 @@ import threading
 import traceback
 
 import collectd
-import influxdb
+import influxdb.influxdb08
 import requests
 
 
@@ -191,16 +191,19 @@ class InfluxDB(object):
 
             data[identifier] = queue_values
             add(queue_values)
-
         try:
+            # collectd.info("write points = %s" % values)
             self._client.write_points(values)
-
         except (requests.exceptions.Timeout,
-                requests.exceptions.ConnectionError):
+                requests.exceptions.ConnectionError,
+                influxdb.influxdb08.client.InfluxDBClientError):
+            collectd.error("error: %s" % traceback.format_exc())
             if self._retry:
                 for identifier, values in data:
                     for v in values:
                         self._queues[identifier].put(v)
+        except:
+            collectd.error("unknown error %s" % traceback.format_exc())
 
     def config(self, conf):
         for node in conf.children:
@@ -209,7 +212,7 @@ class InfluxDB(object):
 
             if key in self._config:
                 if key in ('ssl', 'verify_ssl', 'use_udp'):
-                    self._config[key] = True
+                    self._config[key] = values[0]
 
                 elif key in ('port', 'timeout', 'udp_port'):
                     self._config[key] = int(values[0])
@@ -218,10 +221,10 @@ class InfluxDB(object):
                     self._config[key] = values[0]
 
             elif key == 'retry':
-                self._retry = True
+                self._retry = values[0]
 
             elif key == 'raw_values':
-                self._raw_values = True
+                self._raw_values = values[0]
 
             elif key == 'buffer':
                 self._buffer = values[0]
@@ -242,7 +245,8 @@ class InfluxDB(object):
 
     def init(self):
         self._types = parse_types(*self._typesdb)
-        self._client = influxdb.InfluxDBClient(**self._config)
+        collectd.info("connect to %s" % self._config)
+        self._client = influxdb.influxdb08.InfluxDBClient(**self._config)
         self._queues = collections.defaultdict(lambda: BulkPriorityQueue())
         self._flush_thread = PeriodicTimer(self._buffer_sec,
                                            self._flush,
